@@ -44,33 +44,31 @@ def extrair_texto_pdf(pdf_path, max_paginas=15):
 
 def processar_tese(arquivo_pdf):
     if not API_KEY:
-        return "❌ Erro: Chave GEMINI_API_KEY não configurada no Render.", "", "", ""
+        return "❌ Erro: Chave GEMINI_API_KEY não configurada no Render.", "", "", "", ""
     if arquivo_pdf is None:
-        return "Aguardando envio do arquivo PDF...", "", "", ""
+        return "Aguardando envio do arquivo PDF...", "", "", "", ""
 
     try:
         texto_pdf, total_paginas = extrair_texto_pdf(arquivo_pdf.name)
         
         if not texto_pdf.strip():
-            return "❌ Erro: Não foi possível extrair texto legível deste PDF.", "", "", ""
+            return "❌ Erro: Não foi possível extrair texto legível deste PDF.", "", "", "", ""
 
         client = genai.Client(api_key=API_KEY)
         
         prompt = f"""
-        Você é um catalogador sênior de biblioteca universitária (UFABC) especialista em MARC21.
-        Analise o texto das primeiras páginas do trabalho acadêmico (incluindo Folha de Rosto, Folha de Aprovação, Resumo e Abstract) e extraia os metadados.
+        Você é um catalogador sênior de biblioteca universitária (UFABC) especialista em MARC21 e Objetivos de Desenvolvimento Sustentável (ODS) da ONU.
+        Analise o texto das primeiras páginas do trabalho acadêmico (Folha de Rosto, Folha de Aprovação, Resumos) e extraia os metadados.
 
-        REGRAS RÍGIDAS DE FORMATAÇÃO MARC21 UFABC:
-        1. AUTOR (100): Formato 'Sobrenome, Nome' em capitalização normal (Title Case, EX: 'Costa, Marcelo Rodrigues da'). NÃO use caixa alta no sobrenome.
+        REGRAS RÍGIDAS DE FORMATAÇÃO MARC21 E ODS:
+        1. AUTOR (100): Formato 'Sobrenome, Nome' em capitalização normal (Title Case, ex: 'Costa, Marcelo Rodrigues da').
         2. TÍTULO E SUBTÍTULO (245):
-           - Subtítulo DEVE iniciar com letra MINÚSCULA (ex: 'proposta de uso do GPT...').
-        3. RESUMOS (520): Extraia o Resumo em Português E o Abstract em Inglês completos, se presentes.
+           - O subtítulo DEVE começar com letra MINÚSCULA (ex: 'proposta de uso do GPT...').
+        3. RESUMOS (520): Extraia o Resumo em Português E o Abstract em Inglês completos.
         4. PALAVRAS-CHAVE (650): 
-           - Extraia TODAS as palavras-chave em Português E em Inglês.
-           - TODAS as palavras-chave devem estar estritamente em CAIXA ALTA (MAIÚSCULAS).
-        5. ORIENTADOR E BANCA (700):
-           - Identifique o orientador e os membros da banca examinadora (na Folha de Aprovação) no formato 'Sobrenome, Nome'.
-        6. ILUSTRAÇÕES (300): Verifique se há menção/presença de figuras, gráficos, tabelas ou ilustrações no trabalho.
+           - Extraia palavras-chave em PT e EN em CAIXA ALTA (MAIÚSCULAS).
+        5. TIPO DE DOCUMENTO (990): Determine estritamente se é 'Dissertação' ou 'Tese'.
+        6. ANÁLISE ODS (ONU): Identifique de 1 a 3 Objetivos de Desenvolvimento Sustentável (ODS da ONU) aos quais este trabalho se alinha, justificando brevemente.
 
         Responda ESTRITAMENTE em JSON com a seguinte estrutura:
         {{
@@ -91,7 +89,11 @@ def processar_tese(arquivo_pdf):
           "resumo_en": "Texto completo do abstract em inglês...",
           "palavras_chave_pt": ["DESIGUALDADES DAS MÉDIAS", "GEOMETRIA", "RESOLUÇÃO DE PROBLEMAS", "GEORGE PÓLYA", "IA GENERATIVA", "GPT", "EDUCAÇÃO MATEMÁTICA", "OTIMIZAÇÃO"],
           "palavras_chave_en": ["MEAN INEQUALITIES", "GEOMETRY", "PROBLEM-SOLVING", "GENERATIVE AI", "MATHEMATICS EDUCATION", "OPTIMIZATION"],
-          "tem_ilustracoes": true
+          "tem_ilustracoes": true,
+          "ods_recomendados": [
+            "ODS 4 - Educação de Qualidade: Foco no aprimoramento do ensino de matemática e metodologias pedagógicas no Ensino Médio.",
+            "ODS 9 - Indústria, Inovação e Infraestrutura: Aplicação de Inteligência Artificial Generativa (GPT) como inovação tecnológica na educação."
+          ]
         }}
 
         Texto do PDF:
@@ -122,7 +124,7 @@ def processar_tese(arquivo_pdf):
 
         dados = json.loads(sanitizar_texto_utf8(response.text))
 
-        # Variáveis sanitizadas
+        # Extração e higienização dos campos
         autor = sanitizar_texto_utf8(dados.get("autor_invertido", ""))
         titulo = sanitizar_texto_utf8(dados.get("titulo", ""))
         subtitulo = sanitizar_texto_utf8(dados.get("subtitulo", ""))
@@ -139,11 +141,11 @@ def processar_tese(arquivo_pdf):
         resumo_pt = sanitizar_texto_utf8(dados.get("resumo_pt", ""))
         resumo_en = sanitizar_texto_utf8(dados.get("resumo_en", ""))
 
-        # 1. Referência ABNT
+        # Referência ABNT
         sub_abnt = f": {subtitulo}" if subtitulo else ""
         abnt = f"**{autor.upper()}**. *{titulo}*{sub_abnt}. {ano}. {total_paginas} f. {grau_spec} – {inst}, {cidade}, {ano}."
 
-        # 2. Montagem dos Campos MARC21 Exatos
+        # Montagem dos Campos MARC21 Exatos
         linhas_marc = []
 
         if autor:
@@ -159,35 +161,30 @@ def processar_tese(arquivo_pdf):
         if orientador_completo:
             linhas_marc.append(f"500 __ |a Orientador: {orientador_completo}")
 
-        # Campo 502 Padronizado
         linhas_marc.append(f"502 __ |a {grau_spec} - {inst}, {prog_completo}, {cidade}, {ano}.")
 
-        # Campos 520 (Resumos PT e EN)
         if resumo_pt:
             linhas_marc.append(f"520 __ |a {resumo_pt}")
         if resumo_en:
             linhas_marc.append(f"520 __ |a {resumo_en}")
 
-        # Campos 650 (Palavras-chave em CAIXA ALTA - PT e EN)
-        for kw in dados.get("palavras_chave_pt", []):
+        # Deduplicação de palavras-chave
+        kw_unicas = []
+        for kw in dados.get("palavras_chave_pt", []) + dados.get("palavras_chave_en", []):
             kw_f = sanitizar_texto_utf8(kw).strip('.').upper()
-            if kw_f:
+            if kw_f and kw_f not in kw_unicas:
+                kw_unicas.append(kw_f)
                 linhas_marc.append(f"650 __ |a {kw_f}")
 
-        for kw in dados.get("palavras_chave_en", []):
-            kw_f = sanitizar_texto_utf8(kw).strip('.').upper()
-            if kw_f:
-                linhas_marc.append(f"650 __ |a {kw_f}")
-
-        # Campo 650 do Programa UFABC
+        # Tratamento sem redundância do Programa no 650
         if prog_completo:
-            prog_tag = f"PROGRAMA DE PÓS-GRADUAÇÃO EM {prog_completo.upper()}"
-            if prog_sigla and prog_sigla.upper() not in prog_tag:
-                prog_tag += f" - {prog_sigla.upper()}"
-            prog_tag += " - UFABC"
+            prog_upper = prog_completo.upper()
+            if "PROGRAMA DE PÓS-GRADUAÇÃO" in prog_upper:
+                prog_tag = f"{prog_upper} - UFABC"
+            else:
+                prog_tag = f"PROGRAMA DE PÓS-GRADUAÇÃO EM {prog_upper} - UFABC"
             linhas_marc.append(f"650 __ |a {prog_tag}")
 
-        # Campos 700 (Orientador e Banca)
         if orientador_inv:
             linhas_marc.append(f"700 __ |a {orientador_inv} |e Orientador")
 
@@ -196,19 +193,23 @@ def processar_tese(arquivo_pdf):
             if m_f and m_f != orientador_inv:
                 linhas_marc.append(f"700 __ |a {m_f} |e Membro de Banca")
 
-        # Campo 990 Local
+        # Campo 990 para o Sophia
         linhas_marc.append(f"990 __ |a {grau_tipo}")
 
         marc_final = "\n".join(linhas_marc)
 
-        return abnt, marc_final, resumo_pt, "✅ Registro MARC21 gerado no padrão exato da Biblioteca UFABC!"
+        # Formatação das recomendações ODS
+        ods_lista = dados.get("ods_recomendados", [])
+        ods_texto = "\n".join([f"• {item}" for item in ods_lista]) if ods_lista else "Nenhum ODS específico identificado."
+
+        return abnt, marc_final, resumo_pt, ods_texto, "✅ Registro MARC21 e ODS gerados com sucesso!"
 
     except Exception as e:
-        return f"❌ Erro ao processar: {str(e)}", "", "", ""
+        return f"❌ Erro ao processar: {str(e)}", "", "", "", ""
 
 # Interface Gradio
-with gr.Blocks(title="Gerador MARC21 - UFABC") as demo:
-    gr.Markdown("# 📚 Gerador Automático de MARC21 e Referência (UFABC)")
+with gr.Blocks(title="Gerador MARC21 & ODS - UFABC") as demo:
+    gr.Markdown("# 📚 Gerador Automático de MARC21 e ODS (UFABC)")
     
     with gr.Row():
         file_input = gr.File(label="Arraste o PDF da Tese/Dissertação aqui", file_types=[".pdf"], type="filepath")
@@ -218,13 +219,14 @@ with gr.Blocks(title="Gerador MARC21 - UFABC") as demo:
     
     with gr.Column():
         abnt_output = gr.Markdown(label="Referência ABNT")
-        marc_output = gr.Code(label="Registro MARC21 (Padrão UFABC)", language=None, lines=18)
+        marc_output = gr.Code(label="Registro MARC21 (Padrão Sophia/UFABC)", language=None, lines=18)
+        ods_output = gr.Textbox(label="🎯 Enquadramento nos ODS da ONU (Sugestão de Catalogação)", lines=4)
         resumo_output = gr.Textbox(label="Resumo Extraído", lines=5)
 
     btn_processar.click(
         fn=processar_tese,
         inputs=[file_input],
-        outputs=[abnt_output, marc_output, resumo_output, status_output]
+        outputs=[abnt_output, marc_output, resumo_output, ods_output, status_output]
     )
 
 port = int(os.environ.get("PORT", 7860))
