@@ -8,12 +8,12 @@ from google.genai import types
 
 API_KEY = os.environ.get("GEMINI_API_KEY")
 
-# Lista de modelos para fallback em caso de alta demanda (503)
+# Apenas modelos estáveis e ativos segundo a documentação oficial do Google
 MODELOS_DISPONIVEIS = [
     "gemini-3.8-flash",
-    "gemini-2.0-flash",
-    "gemini-2.5-flash-lite",
-    "gemini-1.5-flash"
+    "gemini-3.6-flash",
+    "gemini-3.5-flash-lite",
+    "gemini-3.1-flash-lite"
 ]
 
 def extrair_texto_pdf(pdf_path, max_paginas=10):
@@ -59,7 +59,7 @@ def processar_tese(arquivo_pdf):
         response = None
         ultimo_erro = None
 
-        # Tenta os modelos em sequência caso algum esteja em pico de uso (503)
+        # Tenta a lista de modelos ativos em sequência caso algum esteja em pico de uso (503)
         for modelo in MODELOS_DISPONIVEIS:
             try:
                 response = client.models.generate_content(
@@ -73,11 +73,11 @@ def processar_tese(arquivo_pdf):
                     break
             except Exception as err:
                 ultimo_erro = err
-                time.sleep(1) # Aguarda 1 segundo antes de tentar o próximo modelo
+                time.sleep(1) # Aguarda 1 segundo antes de tentar o próximo modelo ativo
                 continue
 
         if not response or not response.text:
-            raise Exception(f"Todos os modelos do Gemini estão indisponíveis no momento. Erro: {str(ultimo_erro)}")
+            raise Exception(f"Serviço temporariamente indisponível. Detalhe: {str(ultimo_erro)}")
 
         dados = json.loads(response.text)
 
