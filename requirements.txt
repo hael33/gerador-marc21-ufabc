@@ -1,3 +1,5 @@
 gradio
-google-genai
 pypdf
+google-genai
+requests
+pymarc
