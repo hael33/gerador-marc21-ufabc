@@ -18,26 +18,14 @@ MODELOS_DISPONIVEIS = [
 ]
 
 def sanitizar_texto_utf8(texto):
-    """
-    Higieniza e normaliza qualquer texto extraído do PDF para UTF-8 padrão (NFC).
-    Remove caracteres invisíveis de controle, nulos e repara combinadores soltos.
-    """
     if not texto:
         return ""
-    
-    # 1. Normaliza para Form N-C (transforma 'a' + '˜' no caractere precomposto 'ã')
     texto = unicodedata.normalize("NFC", texto)
-    
-    # 2. Remove caracteres nulos e de controle não imprimíveis (exceto \n e \t)
     texto = re.sub(r'[\x00-\x08\x0B\x0C\x0E-\x1F\x7F-\x9F]', '', texto)
-    
-    # 3. Normaliza espaços múltiplos mantendo a estrutura
     texto = re.sub(r'[ \t]+', ' ', texto)
-    
     return texto.strip()
 
-def extrair_texto_pdf(pdf_path, max_paginas=12):
-    """Lê as páginas iniciais do PDF tratando erros de extração e encodings."""
+def extrair_texto_pdf(pdf_path, max_paginas=15):
     reader = PdfReader(pdf_path)
     total_paginas = len(reader.pages)
     texto_acumulado = []
@@ -64,41 +52,49 @@ def processar_tese(arquivo_pdf):
         texto_pdf, total_paginas = extrair_texto_pdf(arquivo_pdf.name)
         
         if not texto_pdf.strip():
-            return "❌ Erro: Não foi possível extrair texto legível deste PDF. O arquivo pode ser uma imagem digitalizada sem OCR.", "", "", ""
+            return "❌ Erro: Não foi possível extrair texto legível deste PDF.", "", "", ""
 
         client = genai.Client(api_key=API_KEY)
         
         prompt = f"""
-        Você é um especialista em catalogação bibliográfica (MARC21 e ABNT) da Biblioteca da UFABC.
-        Sua tarefa é analisar o texto extraído das páginas iniciais de um trabalho acadêmico e gerar os metadados em JSON.
+        Você é um catalogador sênior de biblioteca universitária (UFABC) especialista em MARC21.
+        Analise o texto das primeiras páginas do trabalho acadêmico (incluindo Folha de Rosto, Folha de Aprovação, Resumo e Abstract) e extraia os metadados.
 
-        REGRAS CRÍTICAS DE TRATAMENTO DE TEXTO E CODIFICAÇÃO (UTF-8):
-        1. CORREÇÃO DE ACENTUAÇÃO E LATEX:
-           - Repare acentos e cedilhas corrompidos por compilação LaTeX (ex: 'Aplica¸ c˜ ao' -> 'Aplicação', 'M´ edias' -> 'Médias', 'Resolu¸ c˜ ao' -> 'Resolução').
-           - Repare falhas de mojibake/encoding (ex: 'Ã§Ã£o' -> 'ção', 'SÃ£o' -> 'São').
-           - Repare ligaduras tipográficas se houver (ex: 'ﬁ' -> 'fi', 'ﬂ' -> 'fl').
-        2. NORMALIZAÇÃO DE NOMES E TÍTULOS:
-           - Remova hifenizações quebras no final de linha (ex: 'Desenvol- vimento' -> 'Desenvolvimento').
-           - Mantenha títulos em 'Sentence case' ou capitalização padrão da língua portuguesa.
-        3. IDIOMA: Responda TODO o conteúdo estritamente em português correto, com acentuação ortográfica perfeita.
+        REGRAS RÍGIDAS DE FORMATAÇÃO MARC21 UFABC:
+        1. AUTOR (100): Formato 'Sobrenome, Nome' em capitalização normal (Title Case, EX: 'Costa, Marcelo Rodrigues da'). NÃO use caixa alta no sobrenome.
+        2. TÍTULO E SUBTÍTULO (245):
+           - Subtítulo DEVE iniciar com letra MINÚSCULA (ex: 'proposta de uso do GPT...').
+        3. RESUMOS (520): Extraia o Resumo em Português E o Abstract em Inglês completos, se presentes.
+        4. PALAVRAS-CHAVE (650): 
+           - Extraia TODAS as palavras-chave em Português E em Inglês.
+           - TODAS as palavras-chave devem estar estritamente em CAIXA ALTA (MAIÚSCULAS).
+        5. ORIENTADOR E BANCA (700):
+           - Identifique o orientador e os membros da banca examinadora (na Folha de Aprovação) no formato 'Sobrenome, Nome'.
+        6. ILUSTRAÇÕES (300): Verifique se há menção/presença de figuras, gráficos, tabelas ou ilustrações no trabalho.
 
-        Extraia os campos e responda ESTRITAMENTE em formato JSON com a seguinte estrutura:
+        Responda ESTRITAMENTE em JSON com a seguinte estrutura:
         {{
-          "autor_sobrenome": "Sobrenome do autor em MAIÚSCULAS (ex: COSTA)",
-          "autor_nome": "Nome e prenomes do autor (ex: Marcelo Rodrigues da)",
-          "titulo": "Título principal sem o subtítulo",
-          "subtitulo": "Subtítulo (se houver, sem a coluna inicial) ou vazio",
-          "ano": "Ano da defesa/publicação (4 dígitos)",
-          "cidade": "Cidade do campus/instituição (padrão: Santo André ou São Bernardo do Campo)",
-          "instituicao": "Nome da instituição (padrão: Universidade Federal do ABC)",
-          "programa": "Nome completo do Programa de Pós-Graduação ou Curso",
-          "grau": "Tipo do trabalho (ex: Dissertação (Mestrado) ou Tese (Doutorado))",
-          "orientador": "Nome completo do(a) orientador(a) com titulação se houver",
-          "resumo": "Texto do resumo extraído do documento",
-          "palavras_chave": ["Lista", "de", "palavras-chave"]
+          "autor_invertido": "Costa, Marcelo Rodrigues da",
+          "titulo": "Aplicação das desigualdades das médias na resolução de problemas de geometria plana e espacial no ensino médio",
+          "subtitulo": "proposta de uso do GPT como ferramenta de apoio pedagógico",
+          "ano": "2025",
+          "cidade": "Santo André",
+          "instituicao": "Universidade Federal do ABC",
+          "programa_completo": "Programa de Pós-Graduação em Mestrado Profissional em Matemática em Rede Nacional - PROFMAT",
+          "programa_sigla": "PROFMAT",
+          "grau_tipo": "Dissertação",
+          "grau_especificacao": "Dissertação (mestrado)",
+          "orientador_nome_completo": "Prof. Dr. Márcio Fabiano da Silva",
+          "orientador_invertido": "Silva, Márcio Fabiano da",
+          "membros_banca_invertidos": ["Guéron, Eduardo", "Lymberopoulos, Alexandre"],
+          "resumo_pt": "Texto completo do resumo em português...",
+          "resumo_en": "Texto completo do abstract em inglês...",
+          "palavras_chave_pt": ["DESIGUALDADES DAS MÉDIAS", "GEOMETRIA", "RESOLUÇÃO DE PROBLEMAS", "GEORGE PÓLYA", "IA GENERATIVA", "GPT", "EDUCAÇÃO MATEMÁTICA", "OTIMIZAÇÃO"],
+          "palavras_chave_en": ["MEAN INEQUALITIES", "GEOMETRY", "PROBLEM-SOLVING", "GENERATIVE AI", "MATHEMATICS EDUCATION", "OPTIMIZATION"],
+          "tem_ilustracoes": true
         }}
 
-        Texto bruto extraído do PDF:
+        Texto do PDF:
         {texto_pdf}
         """
 
@@ -122,56 +118,90 @@ def processar_tese(arquivo_pdf):
                 continue
 
         if not response or not response.text:
-            raise Exception(f"Falha de comunicação com a API. Detalhe: {str(ultimo_erro)}")
+            raise Exception(f"Falha na resposta da API. Detalhe: {str(ultimo_erro)}")
 
-        # Garante a normalização UTF-8 também na resposta JSON da IA
-        resposta_json_limpa = sanitizar_texto_utf8(response.text)
-        dados = json.loads(resposta_json_limpa)
+        dados = json.loads(sanitizar_texto_utf8(response.text))
 
-        sobrenome = sanitizar_texto_utf8(dados.get("autor_sobrenome", "")).upper()
-        nome = sanitizar_texto_utf8(dados.get("autor_nome", ""))
+        # Variáveis sanitizadas
+        autor = sanitizar_texto_utf8(dados.get("autor_invertido", ""))
         titulo = sanitizar_texto_utf8(dados.get("titulo", ""))
-        subtitulo_raw = sanitizar_texto_utf8(dados.get("subtitulo", ""))
-        subtitulo_fmt = f" : {subtitulo_raw}" if subtitulo_raw else ""
+        subtitulo = sanitizar_texto_utf8(dados.get("subtitulo", ""))
         ano = sanitizar_texto_utf8(str(dados.get("ano", "2025")))
-        grau = sanitizar_texto_utf8(dados.get("grau", "Dissertação (Mestrado)"))
-        inst = sanitizar_texto_utf8(dados.get("instituicao", "Universidade Federal do ABC"))
         cidade = sanitizar_texto_utf8(dados.get("cidade", "Santo André"))
-        orientador = sanitizar_texto_utf8(dados.get("orientador", ""))
-        resumo = sanitizar_texto_utf8(dados.get("resumo", ""))
-        programa = sanitizar_texto_utf8(dados.get("programa", ""))
-
-        # Formatação Referência ABNT
-        abnt = f"**{sobrenome}, {nome}**. *{titulo}*{subtitulo_fmt}. {ano}. {total_paginas} f. {grau} – {inst}, {cidade}, {ano}."
-
-        # Formatação Campos MARC21
-        sub_marc = f" : |b {subtitulo_raw}" if subtitulo_raw else ""
-        linhas_marc = [
-            f"100 1_ |a {sobrenome}, {nome}",
-            f"245 10 |a {titulo}{sub_marc} / |c {nome} {sobrenome}.",
-            f"264 _1 |a {cidade} : |b [s.n.], |c {ano}.",
-            f"300 __ |a {total_paginas} f.",
-        ]
-
-        if orientador:
-            linhas_marc.append(f"500 __ |a Orientador(a): {orientador}.")
+        inst = sanitizar_texto_utf8(dados.get("instituicao", "Universidade Federal do ABC"))
+        prog_completo = sanitizar_texto_utf8(dados.get("programa_completo", ""))
+        prog_sigla = sanitizar_texto_utf8(dados.get("programa_sigla", ""))
+        grau_tipo = sanitizar_texto_utf8(dados.get("grau_tipo", "Dissertação"))
+        grau_spec = sanitizar_texto_utf8(dados.get("grau_especificacao", "Dissertação (mestrado)"))
+        orientador_completo = sanitizar_texto_utf8(dados.get("orientador_nome_completo", ""))
+        orientador_inv = sanitizar_texto_utf8(dados.get("orientador_invertido", ""))
         
-        linhas_marc.append(f"502 __ |a {grau} - {inst}, {ano}.")
+        resumo_pt = sanitizar_texto_utf8(dados.get("resumo_pt", ""))
+        resumo_en = sanitizar_texto_utf8(dados.get("resumo_en", ""))
 
-        if resumo:
-            linhas_marc.append(f"520 3_ |a {resumo}")
+        # 1. Referência ABNT
+        sub_abnt = f": {subtitulo}" if subtitulo else ""
+        abnt = f"**{autor.upper()}**. *{titulo}*{sub_abnt}. {ano}. {total_paginas} f. {grau_spec} – {inst}, {cidade}, {ano}."
 
-        for kw in dados.get("palavras_chave", []):
-            kw_limpa = sanitizar_texto_utf8(kw).strip('.')
-            if kw_limpa:
-                linhas_marc.append(f"650 _0 |a {kw_limpa}.")
+        # 2. Montagem dos Campos MARC21 Exatos
+        linhas_marc = []
 
-        if programa:
-            linhas_marc.append(f"710 2_ |a {inst}. |b {programa}.")
+        if autor:
+            linhas_marc.append(f"100 __ |a {autor}")
+
+        sub_marc = f": |b {subtitulo}" if subtitulo else ""
+        linhas_marc.append(f"245 _0 |a {titulo}{sub_marc}")
+        linhas_marc.append(f"260 __ |c {ano}")
+
+        il_str = " |b il." if dados.get("tem_ilustracoes", True) else ""
+        linhas_marc.append(f"300 __ |a {total_paginas} f.{il_str}")
+
+        if orientador_completo:
+            linhas_marc.append(f"500 __ |a Orientador: {orientador_completo}")
+
+        # Campo 502 Padronizado
+        linhas_marc.append(f"502 __ |a {grau_spec} - {inst}, {prog_completo}, {cidade}, {ano}.")
+
+        # Campos 520 (Resumos PT e EN)
+        if resumo_pt:
+            linhas_marc.append(f"520 __ |a {resumo_pt}")
+        if resumo_en:
+            linhas_marc.append(f"520 __ |a {resumo_en}")
+
+        # Campos 650 (Palavras-chave em CAIXA ALTA - PT e EN)
+        for kw in dados.get("palavras_chave_pt", []):
+            kw_f = sanitizar_texto_utf8(kw).strip('.').upper()
+            if kw_f:
+                linhas_marc.append(f"650 __ |a {kw_f}")
+
+        for kw in dados.get("palavras_chave_en", []):
+            kw_f = sanitizar_texto_utf8(kw).strip('.').upper()
+            if kw_f:
+                linhas_marc.append(f"650 __ |a {kw_f}")
+
+        # Campo 650 do Programa UFABC
+        if prog_completo:
+            prog_tag = f"PROGRAMA DE PÓS-GRADUAÇÃO EM {prog_completo.upper()}"
+            if prog_sigla and prog_sigla.upper() not in prog_tag:
+                prog_tag += f" - {prog_sigla.upper()}"
+            prog_tag += " - UFABC"
+            linhas_marc.append(f"650 __ |a {prog_tag}")
+
+        # Campos 700 (Orientador e Banca)
+        if orientador_inv:
+            linhas_marc.append(f"700 __ |a {orientador_inv} |e Orientador")
+
+        for membro in dados.get("membros_banca_invertidos", []):
+            m_f = sanitizar_texto_utf8(membro)
+            if m_f and m_f != orientador_inv:
+                linhas_marc.append(f"700 __ |a {m_f} |e Membro de Banca")
+
+        # Campo 990 Local
+        linhas_marc.append(f"990 __ |a {grau_tipo}")
 
         marc_final = "\n".join(linhas_marc)
 
-        return abnt, marc_final, resumo, "✅ Processado e codificado com sucesso em UTF-8!"
+        return abnt, marc_final, resumo_pt, "✅ Registro MARC21 gerado no padrão exato da Biblioteca UFABC!"
 
     except Exception as e:
         return f"❌ Erro ao processar: {str(e)}", "", "", ""
@@ -179,7 +209,6 @@ def processar_tese(arquivo_pdf):
 # Interface Gradio
 with gr.Blocks(title="Gerador MARC21 - UFABC") as demo:
     gr.Markdown("# 📚 Gerador Automático de MARC21 e Referência (UFABC)")
-    gr.Markdown("Suporte universal a arquivos PDF (LaTeX, Word, LibreOffice) com normalização UTF-8.")
     
     with gr.Row():
         file_input = gr.File(label="Arraste o PDF da Tese/Dissertação aqui", file_types=[".pdf"], type="filepath")
@@ -189,7 +218,7 @@ with gr.Blocks(title="Gerador MARC21 - UFABC") as demo:
     
     with gr.Column():
         abnt_output = gr.Markdown(label="Referência ABNT")
-        marc_output = gr.Code(label="Registro MARC21", language=None, lines=14)
+        marc_output = gr.Code(label="Registro MARC21 (Padrão UFABC)", language=None, lines=18)
         resumo_output = gr.Textbox(label="Resumo Extraído", lines=5)
 
     btn_processar.click(
