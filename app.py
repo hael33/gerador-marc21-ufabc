@@ -2,11 +2,10 @@ import os
 import json
 import gradio as gr
 from pypdf import PdfReader
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 
 API_KEY = os.environ.get("GEMINI_API_KEY")
-if API_KEY:
-    genai.configure(api_key=API_KEY)
 
 def extrair_texto_pdf(pdf_path, max_paginas=10):
     reader = PdfReader(pdf_path)
@@ -20,17 +19,19 @@ def extrair_texto_pdf(pdf_path, max_paginas=10):
 
 def processar_tese(arquivo_pdf):
     if not API_KEY:
-        return "❌ Erro: Chave GEMINI_API_KEY não configurada.", "", "", ""
+        return "❌ Erro: Chave GEMINI_API_KEY não configurada no Render.", "", "", ""
     if arquivo_pdf is None:
-        return "Aguardando arquivo...", "", "", ""
+        return "Aguardando envio do arquivo...", "", "", ""
 
     try:
         texto_pdf, total_paginas = extrair_texto_pdf(arquivo_pdf.name)
-        model = genai.GenerativeModel("gemini-1.5-flash")
-
+        
+        # Inicializa o cliente oficial da nova biblioteca do Google Gemini
+        client = genai.Client(api_key=API_KEY)
+        
         prompt = f"""
         Analise o texto das páginas iniciais desta tese/dissertação da UFABC.
-        Extraia as informações e responda ESTRITAMENTE em JSON com as chaves:
+        Extraia as informações e responda ESTRITAMENTE em formato JSON com as chaves:
         - autor_sobrenome (string)
         - autor_nome (string)
         - titulo (string)
@@ -44,15 +45,18 @@ def processar_tese(arquivo_pdf):
         - resumo (string)
         - palavras_chave (lista de strings)
 
-        Texto:
+        Texto do PDF:
         {texto_pdf}
         """
 
-        response = model.generate_content(
-            prompt,
-            generation_config={"response_mime_type": "application/json"}
+        response = client.models.generate_content(
+            model="gemini-1.5-flash",
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                response_mime_type="application/json"
+            )
         )
-
+        
         dados = json.loads(response.text)
 
         sobrenome = dados.get("autor_sobrenome", "").upper()
@@ -76,7 +80,7 @@ def processar_tese(arquivo_pdf):
 
         if dados.get("orientador"):
             linhas_marc.append(f"500 __ |a Orientador(a): {dados['orientador']}.")
-
+        
         linhas_marc.append(f"502 __ |a {grau} - {inst}, {ano}.")
 
         if dados.get("resumo"):
@@ -88,20 +92,20 @@ def processar_tese(arquivo_pdf):
         if dados.get("programa"):
             linhas_marc.append(f"710 2_ |a {inst}. |b {dados['programa']}.")
 
-        return abnt, "\n".join(linhas_marc), dados.get("resumo", ""), "✅ Sucesso!"
+        return abnt, "\n".join(linhas_marc), dados.get("resumo", ""), "✅ Processado com sucesso!"
 
     except Exception as e:
-        return f"❌ Erro: {str(e)}", "", "", ""
+        return f"❌ Erro ao processar: {str(e)}", "", "", ""
 
 with gr.Blocks(title="Gerador MARC21 - UFABC") as demo:
     gr.Markdown("# 📚 Gerador Automático de MARC21 e Referência (UFABC)")
     with gr.Row():
-        file_input = gr.File(label="Arraste o PDF aqui", file_types=[".pdf"], type="filepath")
+        file_input = gr.File(label="Arraste o PDF da Tese/Dissertação aqui", file_types=[".pdf"], type="filepath")
     btn_processar = gr.Button("⚙️ Processar Documento", variant="primary")
     status_output = gr.Markdown()
     with gr.Column():
         abnt_output = gr.Markdown(label="Referência ABNT")
-        marc_output = gr.Textbox(label="MARC21", lines=12, show_copy_button=True)
+        marc_output = gr.Code(label="Registro MARC21", language=None, lines=12)
         resumo_output = gr.Textbox(label="Resumo", lines=5)
 
     btn_processar.click(
@@ -110,4 +114,6 @@ with gr.Blocks(title="Gerador MARC21 - UFABC") as demo:
         outputs=[abnt_output, marc_output, resumo_output, status_output]
     )
 
-demo.launch(server_name="0.0.0.0", server_port=7860)
+# Mapeia a porta automática definida pelo Render
+port = int(os.environ.get("PORT", 7860))
+demo.launch(server_name="0.0.0.0", server_port=port)
