@@ -26,7 +26,6 @@ def processar_tese(arquivo_pdf):
     try:
         texto_pdf, total_paginas = extrair_texto_pdf(arquivo_pdf.name)
         
-        # Inicializa o cliente oficial da nova biblioteca do Google Gemini
         client = genai.Client(api_key=API_KEY)
         
         prompt = f"""
@@ -50,7 +49,7 @@ def processar_tese(arquivo_pdf):
         """
 
         response = client.models.generate_content(
-            model="gemini-1.5-flash",
+            model="gemini-2.5-flash",
             contents=prompt,
             config=types.GenerateContentConfig(
                 response_mime_type="application/json"
@@ -114,6 +113,5 @@ with gr.Blocks(title="Gerador MARC21 - UFABC") as demo:
         outputs=[abnt_output, marc_output, resumo_output, status_output]
     )
 
-# Mapeia a porta automática definida pelo Render
 port = int(os.environ.get("PORT", 7860))
 demo.launch(server_name="0.0.0.0", server_port=port)
