@@ -1,11 +1,20 @@
 import os
 import json
+import time
 import gradio as gr
 from pypdf import PdfReader
 from google import genai
 from google.genai import types
 
 API_KEY = os.environ.get("GEMINI_API_KEY")
+
+# Lista de modelos para fallback em caso de alta demanda (503)
+MODELOS_DISPONIVEIS = [
+    "gemini-3.8-flash",
+    "gemini-2.0-flash",
+    "gemini-2.5-flash-lite",
+    "gemini-1.5-flash"
+]
 
 def extrair_texto_pdf(pdf_path, max_paginas=10):
     reader = PdfReader(pdf_path)
@@ -25,7 +34,6 @@ def processar_tese(arquivo_pdf):
 
     try:
         texto_pdf, total_paginas = extrair_texto_pdf(arquivo_pdf.name)
-        
         client = genai.Client(api_key=API_KEY)
         
         prompt = f"""
@@ -48,14 +56,29 @@ def processar_tese(arquivo_pdf):
         {texto_pdf}
         """
 
-        response = client.models.generate_content(
-            model="gemini-3.8-flash",
-            contents=prompt,
-            config=types.GenerateContentConfig(
-                response_mime_type="application/json"
-            )
-        )
-        
+        response = None
+        ultimo_erro = None
+
+        # Tenta os modelos em sequência caso algum esteja em pico de uso (503)
+        for modelo in MODELOS_DISPONIVEIS:
+            try:
+                response = client.models.generate_content(
+                    model=modelo,
+                    contents=prompt,
+                    config=types.GenerateContentConfig(
+                        response_mime_type="application/json"
+                    )
+                )
+                if response and response.text:
+                    break
+            except Exception as err:
+                ultimo_erro = err
+                time.sleep(1) # Aguarda 1 segundo antes de tentar o próximo modelo
+                continue
+
+        if not response or not response.text:
+            raise Exception(f"Todos os modelos do Gemini estão indisponíveis no momento. Erro: {str(ultimo_erro)}")
+
         dados = json.loads(response.text)
 
         sobrenome = dados.get("autor_sobrenome", "").upper()
