@@ -8,7 +8,6 @@ from google.genai import types
 
 API_KEY = os.environ.get("GEMINI_API_KEY")
 
-# Apenas modelos estáveis e ativos segundo a documentação oficial do Google
 MODELOS_DISPONIVEIS = [
     "gemini-3.8-flash",
     "gemini-3.6-flash",
@@ -38,28 +37,36 @@ def processar_tese(arquivo_pdf):
         
         prompt = f"""
         Analise o texto das páginas iniciais desta tese/dissertação da UFABC.
-        Extraia as informações e responda ESTRITAMENTE em formato JSON com as chaves:
-        - autor_sobrenome (string)
-        - autor_nome (string)
-        - titulo (string)
-        - subtitulo (string)
-        - ano (string)
-        - cidade (string, padrão: São Bernardo do Campo)
-        - instituicao (string, padrão: Universidade Federal do ABC)
-        - programa (string)
-        - grau (string, ex: Dissertação (Mestrado) ou Tese (Doutorado))
-        - orientador (string)
-        - resumo (string)
-        - palavras_chave (lista de strings)
+        
+        ATENÇÃO EXTREMA À ACENTUAÇÃO E CORREÇÃO DE TEXTO:
+        O texto do PDF contém marcas de acentuação corrompidas vindas de compilação em LaTeX 
+        (exemplo: 'Aplica¸ c˜ ao' deve virar 'Aplicação', 'M´ edias' deve virar 'Médias', 
+        'Resolu¸ c˜ ao' deve virar 'Resolução', 'Pedag´ ogico' deve virar 'Pedagógico', 
+        'M´ arcio' deve virar 'Márcio', 'Matem´ atica' deve virar 'Matemática').
+        
+        Você DEVE corrigir e normalizar toda a ortografia, acentos e cedilhas na língua portuguesa ao gerar o JSON.
 
-        Texto do PDF:
+        Extraia as informações e responda ESTRITAMENTE em formato JSON com as chaves:
+        - autor_sobrenome (string, ex: COSTA)
+        - autor_nome (string, ex: Marcelo Rodrigues da)
+        - titulo (string, totalmente corrigido e acentuado)
+        - subtitulo (string, totalmente corrigido e acentuado, ou vazio se não houver)
+        - ano (string, ex: 2025)
+        - cidade (string, padrão: Santo André ou São Bernardo do Campo conforme o documento)
+        - instituicao (string, padrão: Universidade Federal do ABC)
+        - programa (string, totalmente corrigido e acentuado, ex: Mestrado Profissional em Matemática em Rede Nacional)
+        - grau (string, ex: Dissertação (Mestrado) ou Tese (Doutorado))
+        - orientador (string, totalmente corrigido e acentuado, ex: Prof. Dr. Márcio Fabiano da Silva)
+        - resumo (string, totalmente corrigido e acentuado)
+        - palavras_chave (lista de strings, totalmente corrigidas e acentuadas)
+
+        Texto extraído do PDF:
         {texto_pdf}
         """
 
         response = None
         ultimo_erro = None
 
-        # Tenta a lista de modelos ativos em sequência caso algum esteja em pico de uso (503)
         for modelo in MODELOS_DISPONIVEIS:
             try:
                 response = client.models.generate_content(
@@ -73,7 +80,7 @@ def processar_tese(arquivo_pdf):
                     break
             except Exception as err:
                 ultimo_erro = err
-                time.sleep(1) # Aguarda 1 segundo antes de tentar o próximo modelo ativo
+                time.sleep(1)
                 continue
 
         if not response or not response.text:
@@ -85,17 +92,17 @@ def processar_tese(arquivo_pdf):
         nome = dados.get("autor_nome", "")
         titulo = dados.get("titulo", "")
         subtitulo = f": {dados['subtitulo']}" if dados.get("subtitulo") else ""
-        ano = dados.get("ano", "2024")
+        ano = dados.get("ano", "2025")
         grau = dados.get("grau", "Dissertação (Mestrado)")
         inst = dados.get("instituicao", "Universidade Federal do ABC")
-        cidade = dados.get("cidade", "São Bernardo do Campo")
+        cidade = dados.get("cidade", "Santo André")
 
         abnt = f"**{sobrenome}, {nome}**. *{titulo}*{subtitulo}. {ano}. {grau} – {inst}, {cidade}, {ano}."
 
         sub_marc = f" : |b {dados['subtitulo']}" if dados.get("subtitulo") else ""
         linhas_marc = [
-            f"100 1_ |a {dados.get('autor_sobrenome', '')}, {nome}",
-            f"245 10 |a {titulo}{sub_marc} / |c {nome} {dados.get('autor_sobrenome', '')}.",
+            f"100 1_ |a {sobrenome}, {nome}",
+            f"245 10 |a {titulo}{sub_marc} / |c {nome} {sobrenome}.",
             f"264 _1 |a {cidade} : |b [s.n.], |c {ano}.",
             f"300 __ |a {total_paginas} f.",
         ]
@@ -109,7 +116,8 @@ def processar_tese(arquivo_pdf):
             linhas_marc.append(f"520 3_ |a {dados['resumo']}")
 
         for kw in dados.get("palavras_chave", []):
-            linhas_marc.append(f"650 _0 |a {kw.strip('.')}.")
+            kw_limpa = kw.strip('.')
+            linhas_marc.append(f"650 _0 |a {kw_limpa}.")
 
         if dados.get("programa"):
             linhas_marc.append(f"710 2_ |a {inst}. |b {dados['programa']}.")
