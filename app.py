@@ -203,72 +203,103 @@ def processar_tese(arquivo_pdf):
     except Exception as e:
         return f"❌ Erro ao processar: {str(e)}", "", "", "", ""
 
-# --- CONSULTA EXTERNA DE LIVROS E FUSÃO MARC21 ---
+# --- CONSULTA REST DE MULTIFONTES PARA LIVROS ---
 
-def consultar_library_of_congress(isbn):
-    """Consulta a Library of Congress via protocolo SRU (MARCXML)."""
-    url = f"https://lx2.loc.gov/LCDB?operation=searchRetrieve&version=1.1&query=bath.isbn={isbn}&recordSchema=marcxml"
+def consultar_google_books(isbn):
+    """Busca dados no Google Books via API REST."""
+    url = f"https://www.googleapis.com/books/v1/volumes?q=isbn:{isbn}"
     try:
-        resp = requests.get(url, timeout=5)
-        if resp.status_code == 200 and "<marc:record" in resp.text:
-            return resp.text
+        resp = requests.get(url, timeout=6)
+        if resp.status_code == 200:
+            data = resp.json()
+            if data.get("totalItems", 0) > 0:
+                return json.dumps(data["items"][0]["volumeInfo"], ensure_ascii=False)
     except Exception:
         pass
     return None
 
 def consultar_open_library(isbn):
-    """Consulta a Open Library via API JSON."""
+    """Busca dados na Open Library via API REST."""
     url = f"https://openlibrary.org/api/books?bibkeys=ISBN:{isbn}&format=json&jscmd=data"
     try:
-        resp = requests.get(url, timeout=5)
+        resp = requests.get(url, timeout=6)
         if resp.status_code == 200 and resp.json():
-            return json.dumps(resp.json())
+            return json.dumps(resp.json(), ensure_ascii=False)
+    except Exception:
+        pass
+    
+    try:
+        resp2 = requests.get(f"https://openlibrary.org/isbn/{isbn}.json", timeout=6)
+        if resp2.status_code == 200:
+            return json.dumps(resp2.json(), ensure_ascii=False)
+    except Exception:
+        pass
+    return None
+
+def consultar_harvard_library(isbn):
+    """Busca dados no catálogo da Harvard Library via API Cloud REST."""
+    url = f"https://api.lib.harvard.edu/v2/items.json?isbn={isbn}"
+    try:
+        resp = requests.get(url, timeout=6)
+        if resp.status_code == 200:
+            data = resp.json()
+            if data.get("pagination", {}).get("numFound", 0) > 0:
+                return json.dumps(data["items"], ensure_ascii=False)
     except Exception:
         pass
     return None
 
 def processar_livro_externo(isbn):
     if not API_KEY:
-        return "❌ Erro: Chave GEMINI_API_KEY não configurada.", "", "", ""
+        return "❌ Erro: Chave GEMINI_API_KEY não configurada.", "", "", "", ""
     if not isbn or len(isbn.strip()) < 10:
-        return "Por favor, insira um ISBN válido com 10 ou 13 dígitos.", "", "", ""
+        return "Por favor, insira um ISBN válido com 10 ou 13 dígitos.", "", "", "", ""
 
     isbn_limpo = re.sub(r'[^0-9X]', '', isbn.upper())
     
-    dados_loc = consultar_library_of_congress(isbn_limpo)
+    # Busca paralela/sequencial nas três fontes REST
+    dados_google = consultar_google_books(isbn_limpo)
     dados_openlib = consultar_open_library(isbn_limpo)
+    dados_harvard = consultar_harvard_library(isbn_limpo)
 
-    if not dados_loc and not dados_openlib:
-        return f"❌ Nenhum registro encontrado para o ISBN {isbn_limpo} nas fontes externas.", "", "", ""
+    if not dados_google and not dados_openlib and not dados_harvard:
+        return f"❌ Nenhum registro encontrado para o ISBN {isbn_limpo} nas bases consultadas (Google, OpenLibrary, Harvard).", "", "", "", ""
 
     prompt_fusao = f"""
     Você é um bibliotecário catalogador sênior especialista em MARC21, ABNT e ODS da ONU.
-    Recebi dados bibliográficos de diferentes fontes para o livro ISBN {isbn_limpo}:
+    Recebi dados bibliográficos de diferentes fontes para o livro com ISBN {isbn_limpo}:
 
-    FONTE 1 (Library of Congress - MARCXML):
-    {dados_loc if dados_loc else "Nenhum dado retornado."}
+    FONTE 1 (Google Books API):
+    {dados_google if dados_google else "Nenhum dado retornado."}
 
-    FONTE 2 (Open Library - JSON):
+    FONTE 2 (Open Library API):
     {dados_openlib if dados_openlib else "Nenhum dado retornado."}
 
+    FONTE 3 (Harvard Library Catalog API):
+    {dados_harvard if dados_harvard else "Nenhum dado retornado."}
+
     TAREFA:
-    Combine os dados dessas fontes de forma a criar o registro MARC21 MAIS COMPLETO E RICO possível.
-    - Resolva conflitos mantendo os dados mais precisos.
-    - Faça a união (merge) de assuntos (650), autores secundários (700), notas (500/520).
-    - Identifique os ODS pertinentes ao tema da obra.
+    Analise e combine os dados acima para sintetizar o registro bibliográfico MAIS COMPLETO possível.
+    - Se houver lacunas em alguma fonte, use as outras fontes para preencher.
+    - Se o resumo/descrição estiver em inglês, traduza para o português em 'resumo_pt'.
+    - Gere palavras-chave ricas e pertinentes em caixa alta.
+    - Identifique de 1 a 3 Objetivos de Desenvolvimento Sustentável (ODS) da ONU alinhados ao conteúdo do livro.
 
     Responda ESTRITAMENTE em JSON com a seguinte estrutura:
     {{
       "autor_invertido": "Sobrenome, Nome",
-      "titulo": "Título do livro",
+      "titulo": "Título do Livro",
       "subtitulo": "subtítulo do livro",
       "ano": "2023",
       "cidade": "Local de publicação",
       "editora": "Nome da Editora",
       "paginas": "350",
-      "resumo_pt": "Descrição ou nota de resumo...",
-      "palavras_chave_pt": ["ASSUNTO 1", "ASSUNTO 2"],
-      "ods_recomendados": ["ODS 4 - Educação de Qualidade: Justificativa..."]
+      "resumo_pt": "Resumo ou sinopse completa do livro em português...",
+      "palavras_chave_pt": ["PALAVRA CHAVE 1", "PALAVRA CHAVE 2"],
+      "ods_recomendados": [
+        "ODS 4 - Educação de Qualidade: Justificativa...",
+        "ODS 9 - Indústria, Inovação e Infraestrutura: Justificativa..."
+      ]
     }}
     """
 
@@ -291,7 +322,7 @@ def processar_livro_externo(isbn):
             continue
 
     if not response or not response.text:
-        return f"❌ Falha ao processar a fusão dos dados: {str(ultimo_erro)}", "", "", ""
+        return f"❌ Falha ao processar a fusão dos dados: {str(ultimo_erro)}", "", "", "", ""
 
     try:
         dados = json.loads(sanitizar_texto_utf8(response.text))
@@ -306,8 +337,8 @@ def processar_livro_externo(isbn):
         resumo_pt = sanitizar_texto_utf8(dados.get("resumo_pt", ""))
 
         sub_abnt = f": {subtitulo}" if subtitulo else ""
-        ed_str = f" {editora}," if editora else ""
         cid_str = f"{cidade}: " if cidade else ""
+        ed_str = f" {editora}," if editora else ""
         abnt = f"**{autor.upper()}**. *{titulo}*{sub_abnt}. {cid_str}{ed_str} {ano}. {paginas} p."
 
         linhas_marc = []
@@ -315,8 +346,10 @@ def processar_livro_externo(isbn):
             linhas_marc.append(f"100 __ |a {autor}")
         sub_marc = f": |b {subtitulo}" if subtitulo else ""
         linhas_marc.append(f"245 _0 |a {titulo}{sub_marc}")
-        loc_ed_str = f"{cidade} |b {editora}," if editora else ""
+        
+        loc_ed_str = f"{cidade} |b {editora}," if (cidade or editora) else ""
         linhas_marc.append(f"260 __ |a {loc_ed_str} |c {ano}")
+        
         if paginas:
             linhas_marc.append(f"300 __ |a {paginas} p.")
         if resumo_pt:
@@ -331,9 +364,9 @@ def processar_livro_externo(isbn):
         ods_lista = dados.get("ods_recomendados", [])
         ods_texto = "\n".join([f"• {item}" for item in ods_lista]) if ods_lista else "Nenhum ODS específico identificado."
 
-        return abnt, marc_final, resumo_pt, ods_texto
+        return abnt, marc_final, resumo_pt, ods_texto, "✅ Busca realizada e registro unificado com sucesso!"
     except Exception as e:
-        return f"❌ Erro ao formatar dados do livro: {str(e)}", "", "", ""
+        return f"❌ Erro ao formatar dados do livro: {str(e)}", "", "", "", ""
 
 # --- INTERFACE GRADIO UNIFICADA ---
 
@@ -360,12 +393,13 @@ with gr.Blocks(title="Catalogador Multimídia - UFABC") as demo:
                 outputs=[abnt_tese, marc_tese, resumo_tese, ods_tese, status_tese]
             )
 
-        with gr.Tab("📖 Livros (Busca Externa SRU / APIs)"):
+        with gr.Tab("📖 Livros (Busca Externa por ISBN)"):
             with gr.Row():
                 isbn_input = gr.Textbox(label="Informe o ISBN do Livro", placeholder="Ex: 9788535902778")
             
             btn_processar_livro = gr.Button("🔍 Buscar e Unificar Registros MARC21", variant="primary")
-            
+            status_livro = gr.Markdown()
+
             with gr.Column():
                 abnt_livro = gr.Markdown(label="Referência ABNT")
                 marc_livro = gr.Code(label="Registro MARC21 Mesclado (Mais Completo)", lines=16)
@@ -375,7 +409,7 @@ with gr.Blocks(title="Catalogador Multimídia - UFABC") as demo:
             btn_processar_livro.click(
                 fn=processar_livro_externo,
                 inputs=[isbn_input],
-                outputs=[abnt_livro, marc_livro, resumo_livro, ods_livro]
+                outputs=[abnt_livro, marc_livro, resumo_livro, ods_livro, status_livro]
             )
 
 port = int(os.environ.get("PORT", 7860))
